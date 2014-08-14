@@ -1,3 +1,7 @@
+The bit that I wanted (the model) from the now defunct django-registration, 
+fixed up to work with Custom Models, stub templates added to make the tests
+pass.
+
 .. -*-restructuredtext-*-
 
 This is a fairly simple user-registration application for Django,
