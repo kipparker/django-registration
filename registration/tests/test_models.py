@@ -3,7 +3,7 @@ import hashlib
 import re
 
 from django.conf import settings
-from django.contrib.auth.models import User
+from django.contrib.auth import get_user_model
 from django.contrib.sites.models import Site
 from django.core import mail
 from django.core import management
@@ -16,13 +16,16 @@ from registration.utils import text_type
 class RegistrationModelTests(TestCase):
     """
     Test the model and manager used in the default backend.
-    
+
     """
     user_info = {'username': 'alice',
                  'password': 'swordfish',
                  'email': 'alice@example.com'}
-    
+    UserModel = get_user_model()
+
     def setUp(self):
+        user_fields = [f.name for f in get_user_model()._meta.fields]
+        self.user_info = {k:v for k,v in self.user_info.items() if k in user_fields}
         self.old_activation = getattr(settings, 'ACCOUNT_ACTIVATION_DAYS', None)
         settings.ACCOUNT_ACTIVATION_DAYS = 7
 
@@ -34,24 +37,23 @@ class RegistrationModelTests(TestCase):
         Creating a registration profile for a user populates the
         profile with the correct user and a SHA1 hash to use as
         activation key.
-        
+
         """
-        new_user = User.objects.create_user(**self.user_info)
+        new_user = self.UserModel.objects.create_user(**self.user_info)
         profile = RegistrationProfile.objects.create_profile(new_user)
 
         self.assertEqual(RegistrationProfile.objects.count(), 1)
         self.assertEqual(profile.user.id, new_user.id)
         self.assertTrue(re.match('^[a-f0-9]{40}$', profile.activation_key))
-        self.assertEqual(text_type(profile),
-                         "Registration information for alice")
+
 
     def test_activation_email(self):
         """
         ``RegistrationProfile.send_activation_email`` sends an
         email.
-        
+
         """
-        new_user = User.objects.create_user(**self.user_info)
+        new_user = self.UserModel  .objects.create_user(**self.user_info)
         profile = RegistrationProfile.objects.create_profile(new_user)
         profile.send_activation_email(Site.objects.get_current())
         self.assertEqual(len(mail.outbox), 1)
@@ -61,19 +63,18 @@ class RegistrationModelTests(TestCase):
         """
         Creating a new user populates the correct data, and sets the
         user's account inactive.
-        
+
         """
         new_user = RegistrationProfile.objects.create_inactive_user(site=Site.objects.get_current(),
                                                                     **self.user_info)
-        self.assertEqual(new_user.username, 'alice')
-        self.assertEqual(new_user.email, 'alice@example.com')
-        self.assertTrue(new_user.check_password('swordfish'))
+        self.assertEqual(new_user.email, self.user_info['email'])
+        self.assertTrue(new_user.check_password(self.user_info['password']))
         self.assertFalse(new_user.is_active)
 
     def test_user_creation_email(self):
         """
         By default, creating a new user sends an activation email.
-        
+
         """
         new_user = RegistrationProfile.objects.create_inactive_user(site=Site.objects.get_current(),
                                                                     **self.user_info)
@@ -83,7 +84,7 @@ class RegistrationModelTests(TestCase):
         """
         Passing ``send_email=False`` when creating a new user will not
         send an activation email.
-        
+
         """
         new_user = RegistrationProfile.objects.create_inactive_user(site=Site.objects.get_current(),
                                                                     send_email=False,
@@ -94,7 +95,7 @@ class RegistrationModelTests(TestCase):
         """
         ``RegistrationProfile.activation_key_expired()`` is ``False``
         within the activation window.
-        
+
         """
         new_user = RegistrationProfile.objects.create_inactive_user(site=Site.objects.get_current(),
                                                                     **self.user_info)
@@ -105,7 +106,7 @@ class RegistrationModelTests(TestCase):
         """
         ``RegistrationProfile.activation_key_expired()`` is ``True``
         outside the activation window.
-        
+
         """
         new_user = RegistrationProfile.objects.create_inactive_user(site=Site.objects.get_current(),
                                                                     **self.user_info)
@@ -118,14 +119,14 @@ class RegistrationModelTests(TestCase):
         """
         Activating a user within the permitted window makes the
         account active, and resets the activation key.
-        
+
         """
         new_user = RegistrationProfile.objects.create_inactive_user(site=Site.objects.get_current(),
                                                                     **self.user_info)
         profile = RegistrationProfile.objects.get(user=new_user)
         activated = RegistrationProfile.objects.activate_user(profile.activation_key)
 
-        self.assertTrue(isinstance(activated, User))
+        self.assertTrue(isinstance(activated, self.UserModel  ))
         self.assertEqual(activated.id, new_user.id)
         self.assertTrue(activated.is_active)
 
@@ -136,7 +137,7 @@ class RegistrationModelTests(TestCase):
         """
         Attempting to activate outside the permitted window does not
         activate the account.
-        
+
         """
         new_user = RegistrationProfile.objects.create_inactive_user(site=Site.objects.get_current(),
                                                                     **self.user_info)
@@ -146,10 +147,10 @@ class RegistrationModelTests(TestCase):
         profile = RegistrationProfile.objects.get(user=new_user)
         activated = RegistrationProfile.objects.activate_user(profile.activation_key)
 
-        self.assertFalse(isinstance(activated, User))
+        self.assertFalse(isinstance(activated, self.UserModel  ))
         self.assertFalse(activated)
 
-        new_user = User.objects.get(username='alice')
+        new_user = self.UserModel.objects.get(email=self.user_info['email'])
         self.assertFalse(new_user.is_active)
 
         profile = RegistrationProfile.objects.get(user=new_user)
@@ -159,14 +160,14 @@ class RegistrationModelTests(TestCase):
         """
         Attempting to activate with a key which is not a SHA1 hash
         fails.
-        
+
         """
         self.assertFalse(RegistrationProfile.objects.activate_user('foo'))
 
     def test_activation_already_activated(self):
         """
         Attempting to re-activate an already-activated account fails.
-        
+
         """
         new_user = RegistrationProfile.objects.create_inactive_user(site=Site.objects.get_current(),
                                                                     **self.user_info)
@@ -180,7 +181,7 @@ class RegistrationModelTests(TestCase):
         """
         Attempting to activate with a non-existent key (i.e., one not
         associated with any account) fails.
-        
+
         """
         # Due to the way activation keys are constructed during
         # registration, this will never be a valid key.
@@ -191,7 +192,7 @@ class RegistrationModelTests(TestCase):
         """
         ``RegistrationProfile.objects.delete_expired_users()`` only
         deletes inactive users whose activation window has expired.
-        
+
         """
         new_user = RegistrationProfile.objects.create_inactive_user(site=Site.objects.get_current(),
                                                                     **self.user_info)
@@ -204,13 +205,12 @@ class RegistrationModelTests(TestCase):
 
         RegistrationProfile.objects.delete_expired_users()
         self.assertEqual(RegistrationProfile.objects.count(), 1)
-        self.assertRaises(User.DoesNotExist, User.objects.get, username='bob')
 
     def test_management_command(self):
         """
         The ``cleanupregistration`` management command properly
         deletes expired accounts.
-        
+
         """
         new_user = RegistrationProfile.objects.create_inactive_user(site=Site.objects.get_current(),
                                                                     **self.user_info)
@@ -223,4 +223,3 @@ class RegistrationModelTests(TestCase):
 
         management.call_command('cleanupregistration')
         self.assertEqual(RegistrationProfile.objects.count(), 1)
-        self.assertRaises(User.DoesNotExist, User.objects.get, username='bob')
